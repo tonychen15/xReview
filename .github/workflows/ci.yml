@@ -1,0 +1,42 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# Restrict permissions
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+      - name: Lint
+        run: shellcheck bin/xReview
+      - name: Validate files
+        run: |
+          test -f templates/CLAUDE.md
+          test -f templates/GEMINI.md
+          test -f templates/REVIEW.md
+          test -f claude/commands/feature.md
+          test -f claude/commands/bugfix.md
+          test -f claude/commands/refactor.md
+          test -f gemini/commands/feature.toml
+          test -f gemini/commands/bugfix.toml
+          test -f gemini/commands/refactor.toml
+          echo "All required files present"
+      - name: Syntax check install script
+        run: bash -n install.sh
