@@ -1,0 +1,20 @@
+# .github/ISSUE_TEMPLATE/bug_report.yml
+name: Bug Report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Describe the bug
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: OS / Shell
+      placeholder: "Ubuntu 24 / bash 5.2"
