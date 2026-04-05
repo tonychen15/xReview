@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+# xreview — xReview code review orchestrator
+# Agents are responsible for logging and deciding next actions.
+# This script is stateless tooling: write/read LOCK, trigger agents, exit.
+set -euo pipefail
+
+REVIEW_DIR=".review"
+LOCK_FILE="$REVIEW_DIR/LOCK"
+REVIEW_LOG="$REVIEW_DIR/REVIEW.md"
+MAX_ITERATIONS=5
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+ts()    { date -u +"%Y-%m-%d %H:%M UTC"; }
+epoch() { date +%s; }
+
+peer_of() {
+  case "$1" in
+    claude) echo "gemini" ;;
+    gemini) echo "claude" ;;
+    *) echo "unknown"; exit 1 ;;
+  esac
+}
+
+read_lock() {
+  [[ -f "$LOCK_FILE" ]] || return 1
+  # Source the LOCK file — values with spaces are single-quoted
+  eval "$(cat "$LOCK_FILE")"
+}
+
+write_lock() {
+  # Single-quote OBJECTIVE to handle spaces
+  cat > "$LOCK_FILE" <<EOF
+AGENT=$1
+STATE=$2
+REVIEWER=$3
+ITERATION=$4
+SESSION=$5
+TYPE=$6
+OBJECTIVE='$7'
+TIMESTAMP=$(epoch)
+EOF
+}
+
+next_session() {
+  if [[ -f "$REVIEW_LOG" ]]; then
+    local last
+    last=$(grep -c "^## Session #" "$REVIEW_LOG" 2>/dev/null || true)
+    [[ -z "$last" ]] && last=0
+    echo $((last + 1))
+  else
+    echo 1
+  fi
+}
+
+init_review_log() {
+  mkdir -p "$REVIEW_DIR"
+  if [[ ! -f "$REVIEW_LOG" ]]; then
+    cat > "$REVIEW_LOG" <<'EOF'
+# xReview Log
+
+> Shared review channel between Claude Code and Gemini CLI.
+> Sessions append below. Each agent logs its own state transitions.
+
+---
+
+EOF
+  fi
+}
+
+trigger_agent() {
+  local agent="$1"
+  local prompt="$2"
+  local mode="${3:-sync}"  # sync (default) or async
+
+  local cmd
+  case "$agent" in
+    claude)
+      if ! command -v claude &>/dev/null; then
+        echo "ERROR: claude CLI not found in PATH" >&2
+        exit 1
+      fi
+      cmd=(claude -p "$prompt" --allowedTools "Read,Write,Edit,Bash,Glob,Grep")
+      ;;
+    gemini)
+      if ! command -v gemini &>/dev/null; then
+        echo "ERROR: gemini CLI not found in PATH" >&2
+        exit 1
+      fi
+      cmd=(gemini -p "$prompt")
+      ;;
+    *)
+      echo "ERROR: unknown agent '$agent'" >&2
+      exit 1
+      ;;
+  esac
+
+  local logfile="$REVIEW_DIR/${agent}-$(date +%s).log"
+
+  if [[ "$mode" == "async" ]]; then
+    echo "Launching $agent (log: $logfile)"
+    "${cmd[@]}" > "$logfile" 2>&1 &
+    wait $! 2>/dev/null || true
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "  Reviewer output ($agent):"
+    echo "═══════════════════════════════════════════════════════════════"
+    cat "$logfile"
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "  Full log: $logfile"
+    echo "═══════════════════════════════════════════════════════════════"
+  else
+    "${cmd[@]}" 2>&1 | tee "$logfile" || true
+    echo ""
+    echo "(Full log: $logfile)"
+  fi
+}
+
+# ── Subcommands ────────────────────────────────────────────────────────────────
+
+cmd_task() {
+  local type="$1"   # bugfix, feature, refactor
+  local agent="$2"  # claude or gemini (developer)
+  local desc="$3"   # objective description
+
+  local reviewer
+  reviewer=$(peer_of "$agent")
+  local session
+  session=$(next_session)
+
+  init_review_log
+
+  write_lock "$agent" "implementing" "$reviewer" "1" "$session" "$type" "$desc"
+
+  # Print instructions for the calling agent (it's already running)
+  cat <<EOF
+═══════════════════════════════════════════════════════════════
+  xReview — Session #${session}
+  Type: ${type} | Developer: ${agent} | Reviewer: ${reviewer}
+  Objective: ${desc}
+═══════════════════════════════════════════════════════════════
+
+You are the DEVELOPER for this session.
+
+1. Append the session header and "Implementing" line to ${REVIEW_LOG}
+2. Implement the changes: ${desc}
+3. When done, run:  xreview review
+
+Session format to append to ${REVIEW_LOG}:
+
+## Session #${session} — $(ts)
+**Type:** ${type} | **Developer:** ${agent} | **Reviewer:** ${reviewer}
+**Objective:** ${desc}
+
+### Iteration 1
+- **Implementing** — ${agent} — $(ts)
+EOF
+}
+
+cmd_review() {
+  if ! read_lock; then
+    echo "ERROR: no active session (LOCK file missing)" >&2
+    exit 1
+  fi
+
+  if [[ "$ITERATION" -gt "$MAX_ITERATIONS" ]]; then
+    echo "ERROR: max iterations ($MAX_ITERATIONS) reached for session #$SESSION." >&2
+    echo "Run 'xreview unlock' and intervene manually." >&2
+    exit 1
+  fi
+
+  local reviewer="$REVIEWER"
+  local developer
+  developer=$(peer_of "$reviewer")
+  write_lock "$reviewer" "reviewing" "$REVIEWER" "$ITERATION" "$SESSION" "$TYPE" "$OBJECTIVE"
+
+  echo "Triggering reviewer: $reviewer (async)"
+  trigger_agent "$reviewer" "You are the REVIEWER for xreview session #${SESSION} (iteration ${ITERATION}).
+
+Your task:
+1. Read .review/REVIEW.md to understand the objective
+2. Run 'git diff' to see the changes
+3. Append a reviewing line to .review/REVIEW.md:
+   - **Reviewing** — ${reviewer} — $(date -u +'%Y-%m-%d %H:%M UTC')
+4. Evaluate the changes against the stated objective
+5. Write your verdict in .review/REVIEW.md under the current iteration, using '- ' bullet prefix to keep it grouped with the Implementing/Reviewing lines:
+
+   - **Verdict:** APPROVED or NEEDS_CHANGES
+   - **Findings:** your analysis
+   - **Action Items:** numbered list (if any)
+
+6. Finalize the session directly (do NOT call xreview commit or rework):
+
+   If APPROVED:
+   - Append to .review/REVIEW.md WITHOUT '- ' prefix (top-level, not indented under the iteration):
+     **Session #${SESSION} complete — <current UTC timestamp>**
+   - Remove .review/LOCK (run: rm -f .review/LOCK)
+   - The developer (${developer}) will handle committing separately.
+
+   If NEEDS_CHANGES:
+   - Leave .review/LOCK in place (the developer will read your Action Items and rework)
+
+IMPORTANT: You are in REVIEW-ONLY mode. Do NOT edit any source files. Only edit .review/REVIEW.md.
+IMPORTANT: Do NOT call xreview commit or xreview rework. Handle finalization inline as described above." "async"
+}
+
+cmd_commit() {
+  if ! read_lock; then
+    echo "ERROR: no active session" >&2
+    exit 1
+  fi
+
+  local developer
+  # Developer is the peer of the reviewer
+  developer=$(peer_of "$REVIEWER")
+  write_lock "$developer" "committing" "$REVIEWER" "$ITERATION" "$SESSION" "$TYPE" "$OBJECTIVE"
+
+  echo "Triggering developer: $developer (commit)"
+  trigger_agent "$developer" "xReview session #${SESSION} has been APPROVED by the reviewer.
+
+Your task:
+1. Commit the changes with a descriptive commit message
+2. Append the session-complete line to .review/REVIEW.md:
+   **Session #${SESSION} complete — $(date -u +'%Y-%m-%d %H:%M UTC') (Duration: calculate from session start)**
+3. The session is done.
+
+After committing, remove .review/LOCK to release the session."
+}
+
+cmd_rework() {
+  if ! read_lock; then
+    echo "ERROR: no active session" >&2
+    exit 1
+  fi
+
+  local new_iter=$((ITERATION + 1))
+  if [[ "$new_iter" -gt "$MAX_ITERATIONS" ]]; then
+    echo "ERROR: max iterations ($MAX_ITERATIONS) reached for session #$SESSION." >&2
+    echo "Run 'xreview unlock' and intervene manually." >&2
+    exit 1
+  fi
+
+  local developer
+  developer=$(peer_of "$REVIEWER")
+  write_lock "$developer" "reworking" "$REVIEWER" "$new_iter" "$SESSION" "$TYPE" "$OBJECTIVE"
+
+  echo "Triggering developer: $developer (rework, iteration $new_iter)"
+  trigger_agent "$developer" "xReview session #${SESSION} needs changes (iteration ${new_iter}/${MAX_ITERATIONS}).
+
+Your task:
+1. Read .review/REVIEW.md — find the reviewer's Action Items
+2. Append a new iteration header and reworking line to .review/REVIEW.md:
+   ### Iteration ${new_iter}
+   - **Reworking** — ${developer} — $(date -u +'%Y-%m-%d %H:%M UTC')
+3. Address all the Action Items
+4. When done, run:  xreview review"
+}
+
+cmd_nobug() {
+  if ! read_lock; then
+    echo "ERROR: no active session" >&2
+    exit 1
+  fi
+
+  echo "Session #${SESSION}: no bug found. Closing session."
+  echo ""
+  echo "Append this to .review/REVIEW.md to close the session:"
+  echo ""
+  echo "- **No bug found** — $(date -u +'%Y-%m-%d %H:%M UTC')"
+  echo ""
+  echo "**Session #${SESSION} complete — $(date -u +'%Y-%m-%d %H:%M UTC') (No changes needed)**"
+
+  rm -f "$LOCK_FILE"
+  echo ""
+  echo "Lock released. Session closed."
+}
+
+cmd_status() {
+  if [[ ! -f "$LOCK_FILE" ]]; then
+    echo "No active session."
+    return
+  fi
+  echo "=== xReview Status ==="
+  cat "$LOCK_FILE"
+  echo "================================"
+}
+
+cmd_unlock() {
+  if [[ -f "$LOCK_FILE" ]]; then
+    rm -f "$LOCK_FILE"
+    echo "Lock released. Session can be restarted."
+  else
+    echo "No lock to release."
+  fi
+}
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Usage: xreview <command> [args]
+
+Commands:
+  bugfix  <agent> "<description>"   Start a bugfix session
+  feature <agent> "<description>"   Start a feature session
+  refactor <agent> "<description>"  Start a refactor session
+  review                            Trigger reviewer (called by developer)
+  commit                            Trigger commit (called by reviewer, APPROVED)
+  rework                            Trigger rework (called by reviewer, NEEDS_CHANGES)
+  nobug                             Close session — no bug found (called by developer)
+  status                            Show current session state
+  unlock                            Emergency: clear lock file
+EOF
+}
+
+case "${1:-}" in
+  bugfix|feature|refactor)
+    [[ $# -ge 3 ]] || { echo "Usage: xreview $1 <agent> \"<description>\""; exit 1; }
+    cmd_task "$1" "$2" "$3"
+    ;;
+  review)   cmd_review ;;
+  commit)   cmd_commit ;;
+  rework)   cmd_rework ;;
+  nobug)    cmd_nobug ;;
+  status)   cmd_status ;;
+  unlock)   cmd_unlock ;;
+  -h|--help|help) usage ;;
+  *) usage; exit 1 ;;
+esac

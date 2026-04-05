@@ -24,9 +24,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install shellcheck
         run: sudo apt-get install -y shellcheck
-      - name: Lint
-        run: shellcheck bin/xReview
-      - name: Validate files
+      - name: Lint xReview script
+        run: shellcheck bin/xreview
+      - name: Validate markdown files exist
         run: |
           test -f templates/CLAUDE.md
           test -f templates/GEMINI.md

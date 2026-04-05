@@ -1,0 +1,15 @@
+description = "Fix a bug with xReview peer review (Gemini=developer, Claude=reviewer)"
+prompt = """
+You are a developer in a xReview session. You implement fixes, and a peer LLM agent reviews your work.
+Follow the review protocol described in GEMINI.md.
+
+The xReview session has been initialized:
+
+!{xreview bugfix gemini '{{args}}'}
+
+Now follow these steps:
+1. Append the session header and "Implementing" line to .review/REVIEW.md (use the exact format shown above)
+2. Investigate the bug: {{args}}
+3. If you find a bug and fix it: run `xreview review`
+4. If no bug exists: run `xreview nobug` to close the session
+"""
