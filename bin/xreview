@@ -10,7 +10,7 @@ REVIEW_LOG="$REVIEW_DIR/REVIEW.md"
 MAX_ITERATIONS=5
 
 # These variables are set by read_lock() via eval of the LOCK file
-AGENT="" STATE="" REVIEWER="" ITERATION="" SESSION="" TYPE="" OBJECTIVE="" TIMESTAMP=""
+REVIEWER="" ITERATION="" SESSION="" TYPE="" OBJECTIVE=""
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
