@@ -3,24 +3,54 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR=""
-INSTALL_MODE="global"
+TARGET_DIR=""
 
 # Parse arguments
 if [[ "${1:-}" == "--project" ]]; then
-    PROJECT_DIR="${2:-}"
-    if [[ -z "$PROJECT_DIR" ]]; then
+    TARGET_DIR="${2:-}"
+    if [[ -z "$TARGET_DIR" ]]; then
         echo "Error: --project requires a path"
         exit 1
     fi
-    # Convert to absolute path
-    PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
-    INSTALL_MODE="project"
+    # Create if needed, then convert to absolute path
+    mkdir -p "$TARGET_DIR"
+    TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
+else
+    TARGET_DIR="$(pwd)"
+fi
+
+# ── Case 4: Running from the xReview repo without --project ──
+if [[ "$TARGET_DIR" == "$REPO_DIR" || "$TARGET_DIR" == "$REPO_DIR"/* ]]; then
+    echo "⚠️  You're running this from the xReview repo itself."
+    echo ""
+    echo "Usage:"
+    echo "  Recommended — install to a specific project:"
+    echo "    ./install.sh --project /path/to/your/project"
+    echo ""
+    echo "  Or run from your project directory:"
+    echo "    cd /path/to/your/project"
+    echo "    $REPO_DIR/install.sh"
+    exit 1
+fi
+
+# ── Case 3: Running from $HOME ──
+if [[ "$TARGET_DIR" == "$HOME" ]]; then
+    echo "⚠️  Target directory is your home folder ($HOME)."
+    echo "   This will create CLAUDE.md, GEMINI.md, and .review/ in $HOME."
+    echo ""
+    read -rp "   Continue? [y/N] " confirm
+    if [[ "${confirm,,}" != "y" ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+    echo ""
 fi
 
 echo "╔══════════════════════════════════════════════════╗"
 echo "║            xReview installer                     ║"
 echo "╚══════════════════════════════════════════════════╝"
+echo "── Installing to: $TARGET_DIR ──"
+echo ""
 
 # ── Function: Install Context File ──
 install_context_file() {
@@ -43,7 +73,7 @@ install_context_file() {
     fi
 }
 
-# ── Shared: Install bin/xreview to PATH ──
+# ── Install bin/xreview to PATH ──
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 cp "$REPO_DIR/bin/xreview" "$BIN_DIR/xreview"
@@ -56,74 +86,35 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo "        export PATH=\"\$HOME/.local/bin:\$PATH\""
 fi
 
-if [[ "$INSTALL_MODE" == "global" ]]; then
-    # ── GLOBAL INSTALL ────────────────────────────────────────────────────────
-    TARGET_DIR="$(pwd)"
-    if [[ "$TARGET_DIR" == "$REPO_DIR" ]]; then
-        echo "   ⚠️  You're running this from the xReview repo itself."
-        echo "      Project files (CLAUDE.md, GEMINI.md, .review/) will be created here."
-        echo "      To install into a different project, use: ./install.sh --project /path/to/project"
-        echo ""
-    fi
-    echo "── Global install (commands → ~/.claude, ~/.gemini) ──"
-    echo "── Project files → $TARGET_DIR ──"
+# ── Install commands ──
+mkdir -p "$TARGET_DIR/.claude/commands"
+mkdir -p "$TARGET_DIR/.gemini/commands"
+cp "$REPO_DIR/claude/commands/"*.md "$TARGET_DIR/.claude/commands/"
+cp "$REPO_DIR/gemini/commands/"*.toml "$TARGET_DIR/.gemini/commands/"
+echo "   ✅ Installed commands → .claude/commands/ and .gemini/commands/"
 
-    # Install commands globally
-    CLAUDE_DIR="$HOME/.claude/commands"
-    mkdir -p "$CLAUDE_DIR"
-    cp "$REPO_DIR/claude/commands/"*.md "$CLAUDE_DIR/"
-    echo "   ✅ Installed Claude commands → $CLAUDE_DIR/"
-
-    GEMINI_DIR="$HOME/.gemini/commands"
-    mkdir -p "$GEMINI_DIR"
-    cp "$REPO_DIR/gemini/commands/"*.toml "$GEMINI_DIR/"
-    echo "   ✅ Installed Gemini commands → $GEMINI_DIR/"
-
-    # Project files in current directory
-    mkdir -p "$TARGET_DIR/.review"
-    if [[ ! -f "$TARGET_DIR/.review/REVIEW.md" ]]; then
-        cp "$REPO_DIR/templates/REVIEW.md" "$TARGET_DIR/.review/REVIEW.md"
-        echo "   ✅ Initialized $TARGET_DIR/.review/REVIEW.md"
-    else
-        echo "   ℹ️  $TARGET_DIR/.review/REVIEW.md already exists — skipped"
-    fi
-
-    install_context_file "$TARGET_DIR" "CLAUDE.md"
-    install_context_file "$TARGET_DIR" "GEMINI.md"
-
+# ── Initialize .review/REVIEW.md ──
+mkdir -p "$TARGET_DIR/.review"
+if [[ ! -f "$TARGET_DIR/.review/REVIEW.md" ]]; then
+    cp "$REPO_DIR/templates/REVIEW.md" "$TARGET_DIR/.review/REVIEW.md"
+    echo "   ✅ Initialized .review/REVIEW.md"
 else
-    # ── PROJECT-LEVEL INSTALL ─────────────────────────────────────────────────
-    echo "── Project install → $PROJECT_DIR ──"
-
-    # Install commands into project
-    mkdir -p "$PROJECT_DIR/.claude/commands"
-    mkdir -p "$PROJECT_DIR/.gemini/commands"
-    cp "$REPO_DIR/claude/commands/"*.md "$PROJECT_DIR/.claude/commands/"
-    cp "$REPO_DIR/gemini/commands/"*.toml "$PROJECT_DIR/.gemini/commands/"
-    echo "   ✅ Installed commands → $PROJECT_DIR/.claude/ and .gemini/"
-
-    # Project files
-    mkdir -p "$PROJECT_DIR/.review"
-    if [[ ! -f "$PROJECT_DIR/.review/REVIEW.md" ]]; then
-        cp "$REPO_DIR/templates/REVIEW.md" "$PROJECT_DIR/.review/REVIEW.md"
-        echo "   ✅ Initialized $PROJECT_DIR/.review/REVIEW.md"
-    else
-        echo "   ℹ️  $PROJECT_DIR/.review/REVIEW.md already exists — skipped"
-    fi
-
-    install_context_file "$PROJECT_DIR" "CLAUDE.md"
-    install_context_file "$PROJECT_DIR" "GEMINI.md"
-
-    # Update .gitignore
-    GITIGNORE="$PROJECT_DIR/.gitignore"
-    touch "$GITIGNORE"
-    for entry in ".claude/" ".gemini/" ".review/" "/CLAUDE.md" "/GEMINI.md"; do
-        if ! grep -Fq "$entry" "$GITIGNORE"; then
-            echo "$entry" >> "$GITIGNORE"
-            echo "   ✅ Added $entry to .gitignore"
-        fi
-    done
+    echo "   ℹ️  .review/REVIEW.md already exists — skipped"
 fi
+
+# ── Install CLAUDE.md and GEMINI.md ──
+install_context_file "$TARGET_DIR" "CLAUDE.md"
+install_context_file "$TARGET_DIR" "GEMINI.md"
+
+# ── Update .gitignore ──
+GITIGNORE="$TARGET_DIR/.gitignore"
+touch "$GITIGNORE"
+for entry in ".claude/" ".gemini/" ".review/" "/CLAUDE.md" "/GEMINI.md"; do
+    if ! grep -Fq "$entry" "$GITIGNORE"; then
+        echo "$entry" >> "$GITIGNORE"
+        echo "   ✅ Added $entry to .gitignore"
+    fi
+done
 
 echo ""
 echo "╔══════════════════════════════════════════════════╗"

@@ -43,19 +43,21 @@ Works in reverse too — Gemini implements, Claude reviews.
 
 ## Install
 
-```bash
-git clone https://github.com/tonychen15/xreview.git
-cd xreview
-./install.sh
-```
-
-Or install to a specific project:
+Recommend: install to a specific project:
 
 ```bash
+cd /path/to/xReview
 ./install.sh --project /path/to/your/project
 ```
 
-The installer puts `xreview` in `~/.local/bin/`, installs Claude Code skills/commands to `~/.claude/`, and optionally copies `CLAUDE.md` + `GEMINI.md` into your project.
+Or install from your project:
+
+```bash
+cd /path/to/your/project
+/path/to/xReview/install.sh
+```
+
+let The installer puts `xreview` in `~/.local/bin/`, installs Claude Code /commands to `/.claude/`, and optionally copies `CLAUDE.md` + `GEMINI.md` into your project.
 
 ### Prerequisites
 
