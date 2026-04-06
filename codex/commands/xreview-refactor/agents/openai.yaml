@@ -1,0 +1,5 @@
+interface:
+  display_name: "xreview-refactor"
+  short_description: "Refactor code with cross-LLM peer review"
+policy:
+  allow_implicit_invocation: false

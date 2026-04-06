@@ -1,5 +1,7 @@
 .claude/
 .gemini/
+.agents/
 .review/
 /CLAUDE.md
 /GEMINI.md
+/AGENTS.md

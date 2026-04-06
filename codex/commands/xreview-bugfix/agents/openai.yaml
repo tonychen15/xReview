@@ -1,0 +1,5 @@
+interface:
+  display_name: "xreview-bugfix"
+  short_description: "Fix a bug with cross-LLM peer review"
+policy:
+  allow_implicit_invocation: false

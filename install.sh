@@ -36,7 +36,7 @@ fi
 # ── Case 3: Running from $HOME ──
 if [[ "$TARGET_DIR" == "$HOME" ]]; then
     echo "⚠️  Target directory is your home folder ($HOME)."
-    echo "   This will create CLAUDE.md, GEMINI.md, and .review/ in $HOME."
+    echo "   This will create CLAUDE.md, GEMINI.md, AGENTS.md, and .review/ in $HOME."
     echo ""
     read -rp "   Continue? [y/N] " confirm
     if [[ "${confirm,,}" != "y" ]]; then
@@ -91,7 +91,16 @@ mkdir -p "$TARGET_DIR/.claude/commands"
 mkdir -p "$TARGET_DIR/.gemini/commands"
 cp "$REPO_DIR/claude/commands/"*.md "$TARGET_DIR/.claude/commands/"
 cp "$REPO_DIR/gemini/commands/"*.toml "$TARGET_DIR/.gemini/commands/"
-echo "   ✅ Installed commands → .claude/commands/ and .gemini/commands/"
+echo "   ✅ Installed Claude + Gemini commands"
+
+# Install Codex skills
+for skill_dir in "$REPO_DIR/codex/commands/"*/; do
+    skill_name=$(basename "$skill_dir")
+    mkdir -p "$TARGET_DIR/.agents/skills/$skill_name/agents"
+    cp "$skill_dir/SKILL.md" "$TARGET_DIR/.agents/skills/$skill_name/"
+    cp "$skill_dir/agents/openai.yaml" "$TARGET_DIR/.agents/skills/$skill_name/agents/"
+done
+echo "   ✅ Installed Codex skills → .agents/skills/"
 
 # ── Initialize .review/REVIEW.md ──
 mkdir -p "$TARGET_DIR/.review"
@@ -102,14 +111,15 @@ else
     echo "   ℹ️  .review/REVIEW.md already exists — skipped"
 fi
 
-# ── Install CLAUDE.md and GEMINI.md ──
+# ── Install CLAUDE.md, GEMINI.md, and AGENTS.md ──
 install_context_file "$TARGET_DIR" "CLAUDE.md"
 install_context_file "$TARGET_DIR" "GEMINI.md"
+install_context_file "$TARGET_DIR" "AGENTS.md"
 
 # ── Update .gitignore ──
 GITIGNORE="$TARGET_DIR/.gitignore"
 touch "$GITIGNORE"
-for entry in ".claude/" ".gemini/" ".review/" "/CLAUDE.md" "/GEMINI.md"; do
+for entry in ".claude/" ".gemini/" ".agents/" ".review/" "/CLAUDE.md" "/GEMINI.md" "/AGENTS.md"; do
     if ! grep -Fq "$entry" "$GITIGNORE"; then
         echo "$entry" >> "$GITIGNORE"
         echo "   ✅ Added $entry to .gitignore"
@@ -139,5 +149,11 @@ if command -v gemini &>/dev/null; then
     echo "  ✅ gemini CLI: FOUND"
 else
     echo "  ❌ gemini CLI: NOT FOUND — npm install -g @google/gemini-cli"
+fi
+
+if command -v codex &>/dev/null; then
+    echo "  ✅ codex CLI: FOUND"
+else
+    echo "  ❌ codex CLI: NOT FOUND — npm install -g @openai/codex"
 fi
 echo ""

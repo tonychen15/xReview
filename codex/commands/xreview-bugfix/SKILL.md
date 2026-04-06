@@ -1,9 +1,15 @@
-# /bugfix — Fix a bug with xReview
+---
+name: bugfix
+description: |
+  Fix a bug with xReview peer review. Codex is the developer,
+  a peer LLM agent reviews your work.
+  Use when: /bugfix, fix a bug with review
+---
 
-IMPORTANT: You MUST run this shell command FIRST before doing anything else:
+Run this command first:
 
 ```bash
-xreview claude bugfix "$ARGUMENTS"
+xreview codex bugfix "$ARGUMENTS"
 ```
 
 Read the script's output carefully. It tells you the session number and what to append to .review/REVIEW.md.

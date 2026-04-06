@@ -37,6 +37,10 @@ jobs:
           test -f gemini/commands/feature.toml
           test -f gemini/commands/bugfix.toml
           test -f gemini/commands/refactor.toml
+          test -f codex/commands/xreview-bugfix/SKILL.md
+          test -f codex/commands/xreview-feature/SKILL.md
+          test -f codex/commands/xreview-refactor/SKILL.md
+          test -f templates/AGENTS.md
           echo "All required files present"
       - name: Syntax check install script
         run: bash -n install.sh
