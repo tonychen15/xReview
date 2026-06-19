@@ -16,6 +16,11 @@ AGENT="" STATE="" REVIEWER="" DEVELOPER="" ITERATION="" SESSION="" TYPE="" OBJEC
 
 KNOWN_AGENTS=(claude gemini codex)
 
+# Reviewer preference when none is explicitly requested (highest priority first).
+# Resolution falls through this list, then to any other installed peer, then to
+# developer self-review as a last resort.
+DEFAULT_REVIEWER_PRIORITY=(codex gemini)
+
 detect_installed_agents() {
   local agents=()
   for a in "${KNOWN_AGENTS[@]}"; do
@@ -62,17 +67,24 @@ resolve_reviewer() {
     fi
     echo "$requested"
   else
-    # Pick random from installed peers
-    local peers=()
-    for a in "${installed[@]}"; do
-      [[ "$a" != "$developer" ]] && peers+=("$a")
+    # No reviewer requested — pick by preference order: codex, then gemini, then
+    # any other installed peer, then developer self-review as a last resort.
+    local a
+    for a in "${DEFAULT_REVIEWER_PRIORITY[@]}"; do
+      if [[ "$a" != "$developer" ]] && command -v "$a" &>/dev/null; then
+        echo "$a"
+        return 0
+      fi
     done
-    if [[ ${#peers[@]} -eq 0 ]]; then
-      echo "WARNING: No other agents installed. $developer will self-review." >&2
-      echo "$developer"
-    else
-      echo "${peers[$((RANDOM % ${#peers[@]}))]}"
-    fi
+    # Fall back to any installed peer not covered by the priority list.
+    for a in "${installed[@]}"; do
+      if [[ "$a" != "$developer" ]]; then
+        echo "$a"
+        return 0
+      fi
+    done
+    echo "WARNING: No other agents installed. $developer will self-review." >&2
+    echo "$developer"
   fi
 }
 
@@ -132,7 +144,6 @@ trigger_agent() {
   local agent="$1"
   local prompt="$2"
   local mode="${3:-sync}"    # sync (default) or async
-  local role="${4:-developer}" # developer or reviewer (affects codex sandbox)
 
   local cmd
   case "$agent" in
@@ -155,9 +166,11 @@ trigger_agent() {
         echo "ERROR: codex CLI not found in PATH" >&2
         exit 1
       fi
-      local sandbox="suggest"
-      [[ "$role" == "reviewer" ]] && sandbox="read-only"
-      cmd=(codex exec "$prompt" -C "$(pwd)" -s "$sandbox")
+      # Both roles must write under .review/ (the reviewer records its verdict and
+      # clears LOCK), so workspace-write is required — read-only would block those
+      # writes. The review-only constraint is enforced by the prompt, exactly as it
+      # is for claude/gemini. ("suggest" is not a valid codex sandbox mode.)
+      cmd=(codex exec "$prompt" -C "$(pwd)" -s workspace-write)
       ;;
     *)
       echo "ERROR: unknown agent '$agent'" >&2
@@ -271,7 +284,7 @@ Your task:
    - Leave .review/LOCK in place (the developer will read your Action Items and rework)
 
 IMPORTANT: You are in REVIEW-ONLY mode. Do NOT edit any source files. Only edit .review/REVIEW.md.
-IMPORTANT: Do NOT call xreview commit or xreview rework. Handle finalization inline as described above." "async" "reviewer"
+IMPORTANT: Do NOT call xreview commit or xreview rework. Handle finalization inline as described above." "async"
 }
 
 cmd_commit() {

@@ -1,6 +1,8 @@
 # xReview
 
-xReview development workflow where **Claude Code** and **Gemini CLI** take turns implementing and reviewing each other's code changes.
+xReview development workflow where peer agents — **Claude Code**, **Codex CLI**, and **Gemini CLI** — take turns implementing and reviewing each other's code changes.
+
+When you don't name a reviewer, xReview picks one by preference order: **Codex** first, then **Gemini**, then any other installed agent, and only as a last resort the developer reviews its own work.
 
 ## Philosophy
 
@@ -14,8 +16,9 @@ One agent builds. The other reviews. A shared markdown log tracks everything. A 
 ## How It Works
 
 ```
-User calls /bugfix from Claude Code (or Gemini CLI)
-  → Claude becomes DEVELOPER, Gemini becomes REVIEWER
+User calls /bugfix from Claude Code (or Gemini/Codex CLI)
+  → Claude becomes DEVELOPER, Codex becomes REVIEWER (default)
+  → (override by naming any installed peer as the reviewer)
 
 ┌─────────────────────────────────────────────────────┐
 │  IMPLEMENTING                                       │
@@ -61,9 +64,10 @@ let The installer puts `xreview` in `~/.local/bin/`, installs Claude Code /comma
 
 ### Prerequisites
 
-You need to run these CLIs installed:
+Install at least two of these CLIs (one builds, the other reviews):
 
 - **Claude Code**: https://docs.anthropic.com/en/docs/claude-code
+- **Codex CLI**: https://github.com/openai/codex — the default reviewer
 - **Gemini CLI**: `npm install -g @google/gemini-cli`
 
 ## Usage
