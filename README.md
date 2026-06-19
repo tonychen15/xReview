@@ -1,6 +1,17 @@
 # xReview
 
-xReview development workflow where **Claude Code** and **Gemini CLI** take turns implementing and reviewing each other's code changes.
+xReview development workflow where peer agents — **Claude Code**, **Codex CLI**, and **Gemini CLI** — take turns implementing and reviewing each other's code changes.
+
+### Reviewer selection
+
+When you don't name a reviewer explicitly, xReview chooses one by a fixed fallback order — the developer is never picked as its own reviewer until nothing else is left:
+
+1. **Codex CLI** — the default review party.
+2. **Gemini CLI** — the fallback when Codex isn't available as the reviewer (including when Codex is the developer). Requires a working `GEMINI_API_KEY` set up **in advance** (see [Gemini API key setup](#gemini-api-key-setup)); the OAuth "Sign in with Google" login is not relied upon.
+3. **Any other installed agent** that isn't the developer.
+4. **The coding model itself** — last-resort self-review, only when no peer agent is available (a warning is printed).
+
+You can always override this by naming a reviewer (e.g. `xreview claude bugfix gemini "…"`).
 
 ## Philosophy
 
@@ -14,8 +25,9 @@ One agent builds. The other reviews. A shared markdown log tracks everything. A 
 ## How It Works
 
 ```
-User calls /bugfix from Claude Code (or Gemini CLI)
-  → Claude becomes DEVELOPER, Gemini becomes REVIEWER
+User calls /bugfix from Claude Code (or Gemini/Codex CLI)
+  → Claude becomes DEVELOPER, Codex becomes REVIEWER (default)
+  → (override by naming any installed peer as the reviewer)
 
 ┌─────────────────────────────────────────────────────┐
 │  IMPLEMENTING                                       │
@@ -59,12 +71,47 @@ cd /path/to/your/project
 
 let The installer puts `xreview` in `~/.local/bin/`, installs Claude Code /commands to `/.claude/`, and optionally copies `CLAUDE.md` + `GEMINI.md` into your project.
 
+### Updating
+
+Re-run `install.sh` the same way you first installed — it's the update path:
+
+- the `xreview` binary, command files, and Codex skills are overwritten with the latest;
+- the xReview block inside `CLAUDE.md` / `GEMINI.md` / `AGENTS.md` is delimited by
+  `<!-- xReview:start ... -->` / `<!-- xReview:end -->` markers and is **replaced in place**, so your own content outside the markers is preserved (pre-marker installs are migrated automatically);
+- the installed version is recorded at `.review/.xreview-version`, and the installer reports `Fresh install` / `Updating vX → vY` / `Reinstalling` accordingly.
+
+Check what you have installed with `xreview version`.
+
 ### Prerequisites
 
-You need to run these CLIs installed:
+Install at least two of these CLIs (one builds, the other reviews):
 
 - **Claude Code**: https://docs.anthropic.com/en/docs/claude-code
-- **Gemini CLI**: `npm install -g @google/gemini-cli`
+- **Codex CLI**: https://github.com/openai/codex — the default reviewer
+- **Gemini CLI**: `npm install -g @google/gemini-cli` — the fallback reviewer (needs the API key below)
+
+### Gemini API key setup
+
+Gemini is used as a reviewer when Codex is unavailable or is the developer, and the free OAuth ("Sign in with Google") login is currently unreliable (`IneligibleTierError`). Set it up with a free **Google AI Studio API key** instead so the fallback is ready in advance:
+
+1. Create a key at https://aistudio.google.com/apikey (free tier — no billing).
+2. **Restrict the key**: on the API Keys page choose **Add restrictions → Restrict to Gemini API only**. As of June 19, 2026 Google rejects requests from *unrestricted* API keys, so this step is required.
+3. Make the key available to the CLI. The most reliable place is `~/.gemini/.env`, which the Gemini CLI auto-loads for **any** shell (a plain `export` in `~/.bashrc` is skipped by non-interactive shells, so `xreview` wouldn't see it):
+
+   ```bash
+   install -d -m 700 ~/.gemini                    # ensure the dir exists (private)
+   printf 'GEMINI_API_KEY=%s\n' "YOUR_KEY_HERE" > ~/.gemini/.env
+   chmod 600 ~/.gemini/.env                        # it holds a secret
+   ```
+
+4. Point the CLI at the key instead of OAuth (one-time):
+
+   ```bash
+   gemini   # then choose "Use Gemini API key"
+   # or set ~/.gemini/settings.json -> security.auth.selectedType = "gemini-api-key"
+   ```
+
+Verify with `gemini -p "say OK"`. Note the free tier is rate-limited and may occasionally return "model experiencing high demand" — which is why Codex stays the default reviewer.
 
 ## Usage
 

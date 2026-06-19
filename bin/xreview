@@ -9,21 +9,92 @@ LOCK_FILE="$REVIEW_DIR/LOCK"
 REVIEW_LOG="$REVIEW_DIR/REVIEW.md"
 MAX_ITERATIONS=5
 
+# Keep in sync with the VERSION file at the repo root.
+XREVIEW_VERSION="0.2.0"
+
 # These variables are set by read_lock() via eval of the LOCK file
-REVIEWER="" ITERATION="" SESSION="" TYPE="" OBJECTIVE=""
+REVIEWER="" DEVELOPER="" ITERATION="" SESSION="" TYPE="" OBJECTIVE=""
+
+# ── Agent Detection ───────────────────────────────────────────────────────────
+
+KNOWN_AGENTS=(claude gemini codex)
+
+# Reviewer preference when none is explicitly requested (highest priority first).
+# Resolution falls through this list, then to any other installed peer, then to
+# developer self-review as a last resort.
+DEFAULT_REVIEWER_PRIORITY=(codex gemini)
+
+detect_installed_agents() {
+  local agents=()
+  for a in "${KNOWN_AGENTS[@]}"; do
+    command -v "$a" &>/dev/null && agents+=("$a")
+  done
+  echo "${agents[@]}"
+}
+
+is_known_agent() {
+  local name="$1"
+  for a in "${KNOWN_AGENTS[@]}"; do
+    [[ "$a" == "$name" ]] && return 0
+  done
+  return 1
+}
+
+resolve_reviewer() {
+  local developer="$1"
+  local requested="${2:-}"
+  local installed
+  read -ra installed <<< "$(detect_installed_agents)"
+
+  if [[ -n "$requested" ]]; then
+    # Validate requested reviewer
+    if ! is_known_agent "$requested"; then
+      echo "ERROR: '$requested' is not a known agent (known: ${KNOWN_AGENTS[*]})" >&2
+      exit 1
+    fi
+    if [[ "$requested" == "$developer" ]]; then
+      echo "ERROR: reviewer cannot be the developer" >&2
+      exit 1
+    fi
+    if ! command -v "$requested" &>/dev/null; then
+      local peers=()
+      for a in "${installed[@]}"; do
+        [[ "$a" != "$developer" ]] && peers+=("$a")
+      done
+      if [[ ${#peers[@]} -gt 0 ]]; then
+        echo "ERROR: $requested is not installed. Available reviewers: ${peers[*]}" >&2
+      else
+        echo "ERROR: $requested is not installed. No other agents available." >&2
+      fi
+      exit 1
+    fi
+    echo "$requested"
+  else
+    # No reviewer requested — pick by preference order: codex, then gemini, then
+    # any other installed peer, then developer self-review as a last resort.
+    local a
+    for a in "${DEFAULT_REVIEWER_PRIORITY[@]}"; do
+      if [[ "$a" != "$developer" ]] && command -v "$a" &>/dev/null; then
+        echo "$a"
+        return 0
+      fi
+    done
+    # Fall back to any installed peer not covered by the priority list.
+    for a in "${installed[@]}"; do
+      if [[ "$a" != "$developer" ]]; then
+        echo "$a"
+        return 0
+      fi
+    done
+    echo "WARNING: No other agents installed. $developer will self-review." >&2
+    echo "$developer"
+  fi
+}
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 ts()    { date -u +"%Y-%m-%d %H:%M UTC"; }
 epoch() { date +%s; }
-
-peer_of() {
-  case "$1" in
-    claude) echo "gemini" ;;
-    gemini) echo "claude" ;;
-    *) echo "unknown"; exit 1 ;;
-  esac
-}
 
 read_lock() {
   [[ -f "$LOCK_FILE" ]] || return 1
@@ -37,10 +108,11 @@ write_lock() {
 AGENT=$1
 STATE=$2
 REVIEWER=$3
-ITERATION=$4
-SESSION=$5
-TYPE=$6
-OBJECTIVE='$7'
+DEVELOPER=$4
+ITERATION=$5
+SESSION=$6
+TYPE=$7
+OBJECTIVE='$8'
 TIMESTAMP=$(epoch)
 EOF
 }
@@ -74,7 +146,7 @@ EOF
 trigger_agent() {
   local agent="$1"
   local prompt="$2"
-  local mode="${3:-sync}"  # sync (default) or async
+  local mode="${3:-sync}"    # sync (default) or async
 
   local cmd
   case "$agent" in
@@ -91,6 +163,17 @@ trigger_agent() {
         exit 1
       fi
       cmd=(gemini -p "$prompt")
+      ;;
+    codex)
+      if ! command -v codex &>/dev/null; then
+        echo "ERROR: codex CLI not found in PATH" >&2
+        exit 1
+      fi
+      # Both roles must write under .review/ (the reviewer records its verdict and
+      # clears LOCK), so workspace-write is required — read-only would block those
+      # writes. The review-only constraint is enforced by the prompt, exactly as it
+      # is for claude/gemini. ("suggest" is not a valid codex sandbox mode.)
+      cmd=(codex exec "$prompt" -C "$(pwd)" -s workspace-write)
       ;;
     *)
       echo "ERROR: unknown agent '$agent'" >&2
@@ -124,18 +207,17 @@ trigger_agent() {
 # ── Subcommands ────────────────────────────────────────────────────────────────
 
 cmd_task() {
-  local type="$1"   # bugfix, feature, refactor
-  local agent="$2"  # claude or gemini (developer)
-  local desc="$3"   # objective description
+  local type="$1"       # bugfix, feature, refactor
+  local agent="$2"      # developer agent
+  local reviewer="$3"   # reviewer agent (resolved)
+  local desc="$4"       # objective description
 
-  local reviewer
-  reviewer=$(peer_of "$agent")
   local session
   session=$(next_session)
 
   init_review_log
 
-  write_lock "$agent" "implementing" "$reviewer" "1" "$session" "$type" "$desc"
+  write_lock "$agent" "implementing" "$reviewer" "$agent" "1" "$session" "$type" "$desc"
 
   # Print instructions for the calling agent (it's already running)
   cat <<EOF
@@ -175,9 +257,8 @@ cmd_review() {
   fi
 
   local reviewer="$REVIEWER"
-  local developer
-  developer=$(peer_of "$reviewer")
-  write_lock "$reviewer" "reviewing" "$REVIEWER" "$ITERATION" "$SESSION" "$TYPE" "$OBJECTIVE"
+  local developer="$DEVELOPER"
+  write_lock "$reviewer" "reviewing" "$REVIEWER" "$DEVELOPER" "$ITERATION" "$SESSION" "$TYPE" "$OBJECTIVE"
 
   echo "Triggering reviewer: $reviewer (async)"
   trigger_agent "$reviewer" "You are the REVIEWER for xreview session #${SESSION} (iteration ${ITERATION}).
@@ -215,10 +296,8 @@ cmd_commit() {
     exit 1
   fi
 
-  local developer
-  # Developer is the peer of the reviewer
-  developer=$(peer_of "$REVIEWER")
-  write_lock "$developer" "committing" "$REVIEWER" "$ITERATION" "$SESSION" "$TYPE" "$OBJECTIVE"
+  local developer="$DEVELOPER"
+  write_lock "$developer" "committing" "$REVIEWER" "$DEVELOPER" "$ITERATION" "$SESSION" "$TYPE" "$OBJECTIVE"
 
   echo "Triggering developer: $developer (commit)"
   trigger_agent "$developer" "xReview session #${SESSION} has been APPROVED by the reviewer.
@@ -245,9 +324,8 @@ cmd_rework() {
     exit 1
   fi
 
-  local developer
-  developer=$(peer_of "$REVIEWER")
-  write_lock "$developer" "reworking" "$REVIEWER" "$new_iter" "$SESSION" "$TYPE" "$OBJECTIVE"
+  local developer="$DEVELOPER"
+  write_lock "$developer" "reworking" "$REVIEWER" "$DEVELOPER" "$new_iter" "$SESSION" "$TYPE" "$OBJECTIVE"
 
   echo "Triggering developer: $developer (rework, iteration $new_iter)"
   trigger_agent "$developer" "xReview session #${SESSION} needs changes (iteration ${new_iter}/${MAX_ITERATIONS}).
@@ -287,6 +365,8 @@ cmd_status() {
   fi
   echo "=== xReview Status ==="
   cat "$LOCK_FILE"
+  echo ""
+  echo "Installed agents: $(detect_installed_agents)"
   echo "================================"
 }
 
@@ -303,32 +383,78 @@ cmd_unlock() {
 
 usage() {
   cat <<EOF
-Usage: xreview <command> [args]
+Usage: xreview <dev-agent> <task> [rev-agent] "<description>"
 
-Commands:
-  bugfix  <agent> "<description>"   Start a bugfix session
-  feature <agent> "<description>"   Start a feature session
-  refactor <agent> "<description>"  Start a refactor session
-  review                            Trigger reviewer (called by developer)
-  commit                            Trigger commit (called by reviewer, APPROVED)
-  rework                            Trigger rework (called by reviewer, NEEDS_CHANGES)
-  nobug                             Close session — no bug found (called by developer)
-  status                            Show current session state
-  unlock                            Emergency: clear lock file
+  <dev-agent>   Developer agent: claude, gemini, or codex
+  <task>        Task type: bugfix, feature, or refactor
+  [rev-agent]   Reviewer agent (optional — random if omitted)
+  "<description>" What to do
+
+Examples:
+  xreview claude bugfix gemini "fix the phone extension bug"
+  xreview gemini feature "add dark mode"
+  xreview codex refactor claude "extract shared package"
+
+Other commands:
+  xreview review                    Trigger reviewer (called by developer)
+  xreview commit                    Trigger commit (called by reviewer, APPROVED)
+  xreview rework                    Trigger rework (called by reviewer, NEEDS_CHANGES)
+  xreview nobug                     Close session — no bug found (called by developer)
+  xreview status                    Show current session state
+  xreview unlock                    Emergency: clear lock file
+  xreview version                   Print the installed xreview version
+
+Agents: ${KNOWN_AGENTS[*]}
+Installed: $(detect_installed_agents)
 EOF
 }
 
 case "${1:-}" in
-  bugfix|feature|refactor)
-    [[ $# -ge 3 ]] || { echo "Usage: xreview $1 <agent> \"<description>\""; exit 1; }
-    cmd_task "$1" "$2" "$3"
-    ;;
   review)   cmd_review ;;
   commit)   cmd_commit ;;
   rework)   cmd_rework ;;
   nobug)    cmd_nobug ;;
   status)   cmd_status ;;
   unlock)   cmd_unlock ;;
+  version|--version|-v) echo "xreview ${XREVIEW_VERSION}" ;;
   -h|--help|help) usage ;;
-  *) usage; exit 1 ;;
+  *)
+    # New format: xreview <dev-agent> <task> [rev-agent] "<description>"
+    developer="${1:-}"
+    task_type="${2:-}"
+    shift 2 2>/dev/null || true
+
+    # Validate developer
+    if ! is_known_agent "$developer"; then
+      echo "ERROR: '$developer' is not a known agent (known: ${KNOWN_AGENTS[*]})" >&2
+      echo ""
+      usage
+      exit 1
+    fi
+
+    # Validate task type
+    case "$task_type" in
+      bugfix|feature|refactor) ;;
+      *)
+        echo "ERROR: '$task_type' is not a valid task (must be: bugfix, feature, refactor)" >&2
+        echo ""
+        usage
+        exit 1
+        ;;
+    esac
+
+    # Next arg: if it's a known agent, it's the reviewer. Otherwise it's description.
+    requested_reviewer=""
+    if is_known_agent "${1:-}"; then
+      requested_reviewer="$1"
+      shift
+    fi
+
+    # Remaining args are the description
+    desc="${*:-}"
+    [[ -n "$desc" ]] || { echo "ERROR: description is required"; exit 1; }
+
+    reviewer=$(resolve_reviewer "$developer" "$requested_reviewer")
+    cmd_task "$task_type" "$developer" "$reviewer" "$desc"
+    ;;
 esac

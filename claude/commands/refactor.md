@@ -3,7 +3,7 @@
 IMPORTANT: You MUST run this shell command FIRST before doing anything else:
 
 ```bash
-xreview refactor claude "$ARGUMENTS"
+xreview claude refactor "$ARGUMENTS"
 ```
 
 Read the script's output carefully. It tells you the session number and what to append to .review/REVIEW.md.
