@@ -13,7 +13,7 @@ MAX_ITERATIONS=5
 XREVIEW_VERSION="0.2.0"
 
 # These variables are set by read_lock() via eval of the LOCK file
-AGENT="" STATE="" REVIEWER="" DEVELOPER="" ITERATION="" SESSION="" TYPE="" OBJECTIVE="" TIMESTAMP=""
+REVIEWER="" DEVELOPER="" ITERATION="" SESSION="" TYPE="" OBJECTIVE=""
 
 # ── Agent Detection ───────────────────────────────────────────────────────────
 
