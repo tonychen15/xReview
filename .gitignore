@@ -2,6 +2,8 @@
 .gemini/
 .agents/
 .review/
+.deputy/
+.idea/
 /CLAUDE.md
 /GEMINI.md
 /AGENTS.md
