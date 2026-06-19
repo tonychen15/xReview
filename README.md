@@ -62,6 +62,17 @@ cd /path/to/your/project
 
 let The installer puts `xreview` in `~/.local/bin/`, installs Claude Code /commands to `/.claude/`, and optionally copies `CLAUDE.md` + `GEMINI.md` into your project.
 
+### Updating
+
+Re-run `install.sh` the same way you first installed — it's the update path:
+
+- the `xreview` binary, command files, and Codex skills are overwritten with the latest;
+- the xReview block inside `CLAUDE.md` / `GEMINI.md` / `AGENTS.md` is delimited by
+  `<!-- xReview:start ... -->` / `<!-- xReview:end -->` markers and is **replaced in place**, so your own content outside the markers is preserved (pre-marker installs are migrated automatically);
+- the installed version is recorded at `.review/.xreview-version`, and the installer reports `Fresh install` / `Updating vX → vY` / `Reinstalling` accordingly.
+
+Check what you have installed with `xreview version`.
+
 ### Prerequisites
 
 Install at least two of these CLIs (one builds, the other reviews):

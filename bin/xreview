@@ -9,6 +9,9 @@ LOCK_FILE="$REVIEW_DIR/LOCK"
 REVIEW_LOG="$REVIEW_DIR/REVIEW.md"
 MAX_ITERATIONS=5
 
+# Keep in sync with the VERSION file at the repo root.
+XREVIEW_VERSION="0.2.0"
+
 # These variables are set by read_lock() via eval of the LOCK file
 AGENT="" STATE="" REVIEWER="" DEVELOPER="" ITERATION="" SESSION="" TYPE="" OBJECTIVE="" TIMESTAMP=""
 
@@ -399,6 +402,7 @@ Other commands:
   xreview nobug                     Close session — no bug found (called by developer)
   xreview status                    Show current session state
   xreview unlock                    Emergency: clear lock file
+  xreview version                   Print the installed xreview version
 
 Agents: ${KNOWN_AGENTS[*]}
 Installed: $(detect_installed_agents)
@@ -412,6 +416,7 @@ case "${1:-}" in
   nobug)    cmd_nobug ;;
   status)   cmd_status ;;
   unlock)   cmd_unlock ;;
+  version|--version|-v) echo "xreview ${XREVIEW_VERSION}" ;;
   -h|--help|help) usage ;;
   *)
     # New format: xreview <dev-agent> <task> [rev-agent] "<description>"
